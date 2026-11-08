@@ -42,6 +42,37 @@ pub fn spawn_load(out: Sender<Vec<AppEntry>>, wake: impl Fn() + Send + 'static) 
         .expect("spawn apps thread");
 }
 
+/// `--probe-apps`: how many Start apps get "Open file location" (a real file).
+pub fn probe() {
+    let listed = enumerate();
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED); // enumerate() released its COM
+    }
+    match listed {
+        Err(e) => patina_ui::log::line("launcher", &format!("probe apps: {e}")),
+        Ok(list) => {
+            let store = list.iter().filter(|a| a.id.contains('!')).count();
+            let with_path: Vec<&AppEntry> = list.iter().filter(|a| crate::shell::app_path(&a.id).is_some()).collect();
+            let without: Vec<&str> = list
+                .iter()
+                .filter(|a| !a.id.contains('!') && crate::shell::app_path(&a.id).is_none())
+                .map(|a| a.name.as_str())
+                .collect();
+            patina_ui::log::line(
+                "launcher",
+                &format!(
+                    "probe apps: {} total, {} Store apps, {} with a file, {} desktop without one: {}",
+                    list.len(),
+                    store,
+                    with_path.len(),
+                    without.len(),
+                    without.iter().take(12).copied().collect::<Vec<_>>().join(", ")
+                ),
+            );
+        }
+    }
+}
+
 fn enumerate() -> windows::core::Result<Vec<AppEntry>> {
     unsafe {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;

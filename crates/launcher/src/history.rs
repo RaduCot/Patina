@@ -36,6 +36,17 @@ impl History {
         let e = self.map.entry(id.to_string()).or_insert((0, 0));
         e.0 += 1;
         e.1 = now();
+        self.save();
+    }
+
+    /// "Remove from Top apps": drop what was learned about `id`.
+    pub fn forget(&mut self, id: &str) {
+        if self.map.remove(id).is_some() {
+            self.save();
+        }
+    }
+
+    fn save(&self) {
         let text: String = self.map.iter().map(|(id, (c, t))| format!("{c}\t{t}\t{id}\n")).collect();
         let _ = std::fs::write(&self.path, text);
     }

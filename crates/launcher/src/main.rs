@@ -16,6 +16,7 @@ mod history;
 mod icons;
 mod keyhook;
 mod keys;
+mod pins;
 mod power;
 mod rank;
 mod settings;
@@ -63,6 +64,10 @@ fn main() -> eframe::Result {
             if let (Some(pid), Some(thread)) = (n(2), n(3)) {
                 keyhook::run_helper(pid, thread);
             }
+            return Ok(());
+        }
+        Some("--probe-apps") => {
+            apps::probe();
             return Ok(());
         }
         Some("--probe-icon") => {

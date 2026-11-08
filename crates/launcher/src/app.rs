@@ -24,6 +24,7 @@ use crate::apps::{self, AppEntry};
 use crate::files::{self, FileHit};
 use crate::history::History;
 use crate::icons::{IconKey, Icons};
+use crate::pins::Pins;
 use crate::power::Power;
 use crate::{glyphs, rank, settings, shell, signal};
 
@@ -41,8 +42,10 @@ const GAP: f32 = 8.0;
 const SIDE_W: f32 = 284.0;
 /// The user panel at the foot of the side panel.
 const FOOTER_H: f32 = 56.0;
-/// Width of the floating menus.
-const MENU_W: f32 = 210.0;
+/// Floating menus: width, row height, divider height.
+const MENU_W: f32 = 220.0;
+const MENU_ROW_H: f32 = 32.0;
+const MENU_SEP_H: f32 = 9.0;
 /// Re-read the Apps folder on show if the copy is older than this.
 const APPS_STALE: Duration = Duration::from_secs(120);
 
@@ -173,8 +176,9 @@ pub struct Launcher {
     power_menu: bool,
     /// A right-click menu: (item, where). Fresh on the frame it opened, so that
     /// opening click does not count as a click outside it.
-    context_menu: Option<(usize, egui::Pos2)>,
+    context_menu: Option<ContextMenu>,
     context_fresh: bool,
+    pins: Pins,
     /// Where the power button was drawn last frame (the menu hangs off it).
     power_button: Option<Rect>,
     /// A session-ending search result waiting for its second Enter / click.
@@ -245,6 +249,7 @@ impl Launcher {
             power_menu: false,
             context_menu: None,
             context_fresh: false,
+            pins: Pins::load(),
             power_button: None,
             armed: None,
         }
@@ -435,11 +440,19 @@ impl Launcher {
         }
         self.main_len = items.len();
         // Side column: the same in both views, so the window never reflows.
+        // Top apps = pinned apps first (pin order), then the most-used ones.
+        let pinned: Vec<usize> = self
+            .pins
+            .ids()
+            .iter()
+            .filter_map(|id| self.apps.iter().position(|a| &a.id == id))
+            .collect();
         let mut top: Vec<(i32, usize)> = (0..self.apps.len())
+            .filter(|i| !pinned.contains(i))
             .filter_map(|i| Some((self.history.boost(&self.apps[i].id), i)).filter(|(b, _)| *b > 0))
             .collect();
         top.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        for (_, i) in top.into_iter().take(TOP_APPS) {
+        for i in pinned.into_iter().chain(top.into_iter().map(|(_, i)| i)).take(TOP_APPS) {
             push(&mut items, Section::TopApps, Target::App(i));
         }
         for name in settings::QUICK {
@@ -894,16 +907,19 @@ impl Launcher {
         self.power_button = Some(power);
     }
 
-    fn menu_size(items: usize) -> Vec2 {
-        Vec2::new(MENU_W, items as f32 * ROW_H + 12.0)
+    /// Menu rows: Some = (glyph, label), None = a divider.
+    fn menu_size(rows: &[Option<(char, &str)>]) -> Vec2 {
+        let h: f32 = rows.iter().map(|r| if r.is_some() { MENU_ROW_H } else { MENU_SEP_H }).sum();
+        Vec2::new(MENU_W, h + 12.0)
     }
 
     /// A floating menu (the power button's, a right-click's): darkest
-    /// surface, soft shadow, fading rows. Returns the picked row and whether a
-    /// click landed outside it (and outside `keep`, the control that opened it).
-    fn popup(&self, ctx: &egui::Context, key: &str, at: egui::Pos2, items: &[(char, &str)], keep: Option<Rect>) -> (Option<usize>, bool) {
+    /// surface, soft shadow, fading rows, dividers between groups. Returns the
+    /// picked row (index into `rows`) and whether a click landed outside it
+    /// (and outside `keep`, the control that opened it).
+    fn popup(&self, ctx: &egui::Context, key: &str, at: egui::Pos2, rows: &[Option<(char, &str)>], keep: Option<Rect>) -> (Option<usize>, bool) {
         let p = self.palette;
-        let size = Self::menu_size(items.len());
+        let width = Self::menu_size(rows).x - 12.0;
         let mut chosen = None;
         let shown = egui::Area::new(egui::Id::unique(key))
             .order(egui::Order::Foreground)
@@ -915,14 +931,20 @@ impl Launcher {
                     .inner_margin(6)
                     .shadow(egui::Shadow { offset: [0, 6], blur: 20, spread: 0, color: Color32::from_black_alpha(110) })
                     .show(ui, |ui| {
-                        for (n, &(glyph, label)) in items.iter().enumerate() {
-                            let (rect, resp) = ui.allocate_exact_size(Vec2::new(size.x - 12.0, ROW_H), Sense::click());
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for (n, row) in rows.iter().enumerate() {
+                            let Some((glyph, label)) = *row else {
+                                let (rect, _) = ui.allocate_exact_size(Vec2::new(width, MENU_SEP_H), Sense::hover());
+                                ui.painter().hline(rect.x_range().shrink(8.0), rect.center().y, egui::Stroke::new(1.0, p.edge));
+                                continue;
+                            };
+                            let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, MENU_ROW_H), Sense::click());
                             let t = ui.ctx().animate_bool_with_time(ui.scope_id().with((key, n)), resp.hovered(), 0.12);
                             if t > 0.0 {
                                 ui.painter().rect_filled(rect, 4.0, p.selection.gamma_multiply(t));
                             }
                             let ink = lerp_color(p.content, p.content_strong, t);
-                            let icon = Rect::from_center_size(rect.left_center() + Vec2::new(18.0, 0.0), Vec2::splat(18.0));
+                            let icon = Rect::from_center_size(rect.left_center() + Vec2::new(18.0, 0.0), Vec2::splat(16.0));
                             glyphs::glyph(ui.painter(), glyph, icon, ink);
                             ui.painter().text(rect.left_center() + Vec2::new(38.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(14.0), ink);
                             if resp.clicked() {
@@ -940,10 +962,10 @@ impl Launcher {
     fn power_menu(&mut self, ctx: &egui::Context) {
         let (Some(button), true) = (self.power_button, self.power_menu) else { return };
         let choices = [Power::Sleep, Power::Restart, Power::ShutDown, Power::SignOut];
-        let items: Vec<(char, &str)> = choices.iter().map(|&p| (glyphs::codepoint(p), p.name())).collect();
-        let size = Self::menu_size(items.len());
+        let rows: Vec<Option<(char, &str)>> = choices.iter().map(|&p| Some((glyphs::codepoint(p), p.name()))).collect();
+        let size = Self::menu_size(&rows);
         let at = pos2(button.max.x - size.x, button.min.y - size.y - 8.0);
-        let (chosen, outside) = self.popup(ctx, "power-menu", at, &items, Some(button));
+        let (chosen, outside) = self.popup(ctx, "power-menu", at, &rows, Some(button));
         if let Some(n) = chosen {
             self.power_menu = false;
             self.hide(ctx, "power");
@@ -953,34 +975,159 @@ impl Launcher {
         }
     }
 
-    /// Right-click menu on a row: Open, Run as administrator (desktop apps,
-    /// runnable files), Open file location (files).
-    fn context_menu(&mut self, ctx: &egui::Context) {
-        let Some((i, at)) = self.context_menu else { return };
-        let is_file = matches!(self.items.get(i).map(|it| &it.target), Some(Target::File(_)));
-        let mut items: Vec<(char, &str)> = vec![(glyphs::OPEN, "Open")];
-        if self.elevatable(i) {
-            items.push((glyphs::ADMIN, "Run as administrator"));
+    /// What the right-click menu offers for item `i`, worked out once when it
+    /// opens (finding an app's real file is a shell call, not per-frame work).
+    /// Apps: open / elevate, location + path, pinning, uninstall, properties.
+    /// Files and folders: open / elevate / open with, location, terminal,
+    /// path, properties. Settings and power actions: just Open.
+    fn build_context_menu(&self, i: usize, at: egui::Pos2) -> ContextMenu {
+        let mut rows: Vec<Option<(char, &'static str, Act)>> = vec![Some((glyphs::OPEN, "Open", Act::Open))];
+        let mut path = None;
+        match self.items.get(i).map(|it| it.target.clone()) {
+            Some(Target::App(a)) => {
+                let id = &self.apps[a].id;
+                path = shell::app_path(id);
+                if self.elevatable(i) {
+                    rows.push(Some((glyphs::ADMIN, "Run as administrator", Act::Admin)));
+                }
+                if path.is_some() {
+                    rows.push(None);
+                    rows.push(Some((glyphs::FOLDER, "Open file location", Act::Location)));
+                    rows.push(Some((glyphs::COPY, "Copy path", Act::CopyPath)));
+                }
+                rows.push(None);
+                let pinned = self.pins.contains(id);
+                rows.push(Some(if pinned {
+                    (glyphs::UNPIN, "Unpin from Top apps", Act::Unpin)
+                } else {
+                    (glyphs::PIN, "Pin to Top apps", Act::Pin)
+                }));
+                let in_top = self.items[self.main_len..]
+                    .iter()
+                    .any(|it| it.section == Section::TopApps && matches!(it.target, Target::App(x) if x == a));
+                if in_top && !pinned {
+                    rows.push(Some((glyphs::HIDE, "Remove from Top apps", Act::Forget)));
+                }
+                rows.push(None);
+                rows.push(Some((glyphs::UNINSTALL, "Uninstall", Act::Uninstall)));
+                rows.push(Some((glyphs::PROPERTIES, "Properties", Act::Properties)));
+            }
+            Some(Target::File(f)) => {
+                let p = f.path();
+                if self.elevatable(i) {
+                    rows.push(Some((glyphs::ADMIN, "Run as administrator", Act::Admin)));
+                }
+                if !f.is_dir {
+                    rows.push(Some((glyphs::OPEN_WITH, "Open with...", Act::OpenWith)));
+                }
+                rows.push(None);
+                rows.push(Some((glyphs::FOLDER, "Open file location", Act::Location)));
+                rows.push(Some((glyphs::TERMINAL, "Open in terminal", Act::Terminal)));
+                rows.push(Some((glyphs::COPY, "Copy path", Act::CopyPath)));
+                rows.push(None);
+                rows.push(Some((glyphs::PROPERTIES, "Properties", Act::Properties)));
+                path = Some(p);
+            }
+            _ => {}
         }
-        if is_file {
-            items.push((glyphs::FOLDER, "Open file location"));
-        }
-        // Open at the pointer, kept inside the window.
-        let size = Self::menu_size(items.len());
-        let bounds = ctx.content_rect();
-        let at = pos2(at.x.min(bounds.max.x - size.x - 4.0), at.y.min(bounds.max.y - size.y - 4.0));
-        let labels: Vec<&str> = items.iter().map(|(_, l)| *l).collect();
-        let (chosen, outside) = self.popup(ctx, "context-menu", at, &items, None);
-        let fresh = std::mem::take(&mut self.context_fresh);
-        match chosen.map(|n| labels[n]) {
-            Some("Open") => self.activate(ctx, i, false),
-            Some("Run as administrator") => self.activate_admin(ctx, i),
-            Some("Open file location") => self.activate(ctx, i, true),
-            _ if outside && !fresh => {} // closed below
-            _ => return,
-        }
-        self.context_menu = None;
+        ContextMenu { item: i, at, rows, path }
     }
+
+    fn context_menu(&mut self, ctx: &egui::Context) {
+        let Some(menu) = &self.context_menu else { return };
+        let rows: Vec<Option<(char, &str)>> = menu.rows.iter().map(|r| r.map(|(g, l, _)| (g, l))).collect();
+        // Open at the pointer, kept inside the window (flipping up near the bottom).
+        let size = Self::menu_size(&rows);
+        let bounds = ctx.content_rect();
+        let mut at = menu.at;
+        if at.y + size.y > bounds.max.y - 4.0 {
+            at.y = (at.y - size.y).max(bounds.min.y + 4.0);
+        }
+        at.x = at.x.min(bounds.max.x - size.x - 4.0);
+        let (chosen, outside) = self.popup(ctx, "context-menu", at, &rows, None);
+        let fresh = std::mem::take(&mut self.context_fresh);
+        if let Some(n) = chosen {
+            let menu = self.context_menu.take().expect("open");
+            if let Some((_, _, act)) = menu.rows[n] {
+                self.perform(ctx, act, menu.item, menu.path);
+            }
+        } else if outside && !fresh {
+            self.context_menu = None;
+        }
+    }
+
+    fn perform(&mut self, ctx: &egui::Context, act: Act, i: usize, path: Option<std::path::PathBuf>) {
+        let target = self.items.get(i).map(|it| it.target.clone());
+        let app_id = match &target {
+            Some(Target::App(a)) => Some(self.apps[*a].id.clone()),
+            _ => None,
+        };
+        let is_dir = matches!(&target, Some(Target::File(f)) if f.is_dir);
+        match act {
+            Act::Open => return self.activate(ctx, i, false),
+            Act::Admin => return self.activate_admin(ctx, i),
+            // Patina-side changes: stay open and show the result.
+            Act::Pin | Act::Unpin => {
+                if let Some(id) = app_id {
+                    self.pins.toggle(&id);
+                    self.rebuild();
+                }
+                return;
+            }
+            Act::Forget => {
+                if let Some(id) = app_id {
+                    self.history.forget(&id);
+                    self.rebuild();
+                }
+                return;
+            }
+            Act::OpenWith => path.iter().for_each(|p| shell::open_with(p)),
+            Act::Location => path.iter().for_each(|p| shell::reveal(p)),
+            Act::Terminal => {
+                if let Some(p) = &path {
+                    let dir = if is_dir { p.as_path() } else { p.parent().unwrap_or(p) };
+                    shell::open_terminal(dir);
+                }
+            }
+            Act::CopyPath => {
+                if let Some(p) = &path {
+                    ctx.copy_text(p.display().to_string());
+                }
+            }
+            Act::Uninstall => shell::open_target("ms-settings:appsfeatures", None),
+            Act::Properties => match (&path, app_id) {
+                (Some(p), _) => shell::properties(p.display().to_string()),
+                (None, Some(id)) => shell::properties(format!(r"shell:AppsFolder\{id}")),
+                _ => {}
+            },
+        }
+        self.hide(ctx, "context menu");
+    }
+}
+
+/// What a right-click menu entry does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Act {
+    Open,
+    Admin,
+    OpenWith,
+    Location,
+    Terminal,
+    CopyPath,
+    Pin,
+    Unpin,
+    Forget,
+    Uninstall,
+    Properties,
+}
+
+/// An open right-click menu: the item, where it opened, its rows (None = a
+/// divider), and the item's file when it has one.
+struct ContextMenu {
+    item: usize,
+    at: egui::Pos2,
+    rows: Vec<Option<(char, &'static str, Act)>>,
+    path: Option<std::path::PathBuf>,
 }
 
 impl eframe::App for Launcher {
@@ -1100,7 +1247,7 @@ impl eframe::App for Launcher {
         self.power_menu(&ctx);
         if let Some((i, at)) = ptr.context {
             self.power_menu = false;
-            self.context_menu = Some((i, at));
+            self.context_menu = Some(self.build_context_menu(i, at));
             self.context_fresh = true; // its own opening click is not "outside"
             self.sel = Some(i);
         }

@@ -12,6 +12,14 @@ use crate::power::Power;
 pub const OPEN: char = '\u{E8A7}'; // open in new window
 pub const ADMIN: char = '\u{E7EF}'; // window with a shield, as Windows marks elevation
 pub const FOLDER: char = '\u{E838}'; // open folder
+pub const OPEN_WITH: char = '\u{E7AC}';
+pub const COPY: char = '\u{E8C8}';
+pub const TERMINAL: char = '\u{E756}';
+pub const PROPERTIES: char = '\u{E946}'; // info
+pub const PIN: char = '\u{E718}';
+pub const UNPIN: char = '\u{E77A}';
+pub const UNINSTALL: char = '\u{E74D}'; // bin
+pub const HIDE: char = '\u{ED1A}'; // eye struck through
 
 pub fn codepoint(power: Power) -> char {
     match power {
