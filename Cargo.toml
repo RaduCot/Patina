@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.99"
+version = "0.1.0"
+
+[workspace.dependencies]
+patina-ui = { path = "crates/patina-ui" }
+# OpenGL (glow), never wgpu: the toolkit spike measured wgpu at 3-6x the
+# memory and 3x the first-frame time for the same window.
+eframe = { version = "0.37", default-features = false, features = ["glow", "accesskit", "clipboard", "default_fonts"] }
+raw-window-handle = "0.6"
+everything-ipc = "0.1.4"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Power",
+  "Win32_System_Registry",
+  "Win32_System_Shutdown",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_Accessibility",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

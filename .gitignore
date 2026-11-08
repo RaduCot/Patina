@@ -1,0 +1,6 @@
+/target
+
+# WinTune's local state: the machine's original service/task/policy settings
+# (needed by -Mode Restore) and its run logs. Never published.
+/wintune/backup*.json
+/wintune/log-*.txt

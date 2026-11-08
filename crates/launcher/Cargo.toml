@@ -1,0 +1,12 @@
+[package]
+name = "patina-launcher"
+description = "Keyboard launcher for apps and files - replaces Start search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+patina-ui.workspace = true
+eframe.workspace = true
+everything-ipc.workspace = true
+windows.workspace = true

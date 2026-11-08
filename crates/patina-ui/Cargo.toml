@@ -1,0 +1,11 @@
+[package]
+name = "patina-ui"
+description = "Shared look and window plumbing for the Patina tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+eframe.workspace = true
+raw-window-handle.workspace = true
+windows.workspace = true
